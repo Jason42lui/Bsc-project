@@ -8,6 +8,7 @@ from scapy.all import sniff, Ether, IP, TCP, UDP, ICMP, ARP, Raw
 from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
 
 # Configure logging for packets
 logging.basicConfig(
@@ -73,6 +74,10 @@ def detect_attack(packet):
             packet_counter["ARP"] += 1
         else:
             packet_counter["Other"] += 1
+    
+    # Track packet sizes
+    if packet.haslayer(IP):
+        packet_sizes.append(len(packet))
 
     # Detect SYN Flood
     if packet.haslayer(TCP):
@@ -164,20 +169,54 @@ def start_sniffing_thread():
     sniff_thread = threading.Thread(target=start_sniffing, daemon=True)
     sniff_thread.start()
 
-def update_pie_chart():
-    labels = list(packet_counter.keys())
-    sizes = list(packet_counter.values())
-    ax.clear()
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+def update_graphs():
+    """Updates all graphs in the IDS dashboard."""
+    global packet_counter, attack_counts, packet_sizes
+    
+    ax1.clear()
+    ax2.clear()
+    ax3.clear()
+    ax4.clear()
+    
+    # --- Update Pie Chart (Packet Distribution) ---
+    if not packet_counter:
+        ax1.text(0.5, 0.5, "No Data", fontsize=14, ha='center', va='center')
+    else:
+        labels = list(packet_counter.keys())
+        sizes = list(packet_counter.values())
+        colors = ['blue', 'green', 'red', 'purple', 'orange']
+        explode = [0.05] * len(labels)
+        ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140,
+                colors=colors, explode=explode, shadow=True, textprops={'fontsize': 12})
+        ax1.set_title("Packet Distribution", fontsize=14)
+
+    # --- Update Bar Chart (Packet Type Count) ---
+    if packet_counter:
+        labels = list(packet_counter.keys())
+        values = list(packet_counter.values())
+        ax2.bar(labels, values, color=['blue', 'green', 'red', 'purple', 'orange'])
+        ax2.set_title("Packet Type Distribution")
+        ax2.set_xlabel("Packet Type")
+        ax2.set_ylabel("Count")
+    
+    # --- Update Histogram (Packet Size Distribution) ---
+    if packet_sizes:
+        ax3.hist(packet_sizes, bins=20, color='blue', edgecolor='black')
+        ax3.set_title("Packet Size Distribution")
+        ax3.set_xlabel("Packet Size (bytes)")
+        ax3.set_ylabel("Frequency")
+    
     canvas.draw()
-    root.after(1000, update_pie_chart)
+    root.after(1000, update_graphs)  # Refresh graphs every second
+
 
 def create_ui():
-    global alert_text, packet_text, ax, canvas, root
+    global alert_text, packet_text, ax1, ax2, ax3, ax4, canvas, root, attack_counts, packet_sizes
     
     root = tk.Tk()
     root.title("IDS Dashboard")
     
+    # Text Logs
     tk.Label(root, text="Incoming Packets:").pack()
     packet_text = scrolledtext.ScrolledText(root, width=100, height=10)
     packet_text.pack()
@@ -189,11 +228,16 @@ def create_ui():
     start_button = tk.Button(root, text="Start IDS", command=start_sniffing_thread)
     start_button.pack()
     
-    fig, ax = plt.subplots()
+    # Graphs Layout
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
     canvas = FigureCanvasTkAgg(fig, master=root)
     canvas.get_tk_widget().pack()
     
-    root.after(1000, update_pie_chart)
+    # Data Tracking
+    attack_counts = {}  # Dictionary to track attacks over time
+    packet_sizes = []  # List to store packet sizes
+    
+    root.after(1000, update_graphs)
     root.mainloop()
 
 print("Starting IDS UI...")
