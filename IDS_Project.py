@@ -4,11 +4,13 @@ import tkinter as tk
 import threading
 from tkinter import scrolledtext
 from collections import defaultdict
-from scapy.all import sniff, Ether, IP, TCP, UDP, ICMP, ARP, Raw
+from scapy.all import sniff, Ether, IP, TCP, UDP, ICMP, ARP, Raw, hexdump
 from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
+
+packet_log_file = "detailed_packet_log.txt"
 
 # Configure logging for packets
 logging.basicConfig(
@@ -25,13 +27,14 @@ attack_handler = logging.FileHandler("attacks.log")
 attack_formatter = logging.Formatter("%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S")
 attack_handler.setFormatter(attack_formatter)
 attack_logger.addHandler(attack_handler)
-attack_logger.addHandler(logging.StreamHandler())  # Helps debug by printing logs to console
-attack_logger.propagate = False  # Prevent logs from interfering with root logger
+attack_logger.addHandler(logging.StreamHandler())
+attack_logger.propagate = False  
 
 # Track attack occurrences
 syn_counter = defaultdict(list)
 icmp_counter = defaultdict(list)
 udp_counter = defaultdict(list)
+ip_counter = defaultdict(int)  # Add this globally
 last_alert_time = defaultdict(lambda: 0) 
 alert_cooldown = 5
 
@@ -50,20 +53,60 @@ def should_log(ip, attack_type):
         return True
     return False
 
+def log_packet(packet):
+    """Logs detailed packet information to a file in a human-readable format."""
+    with open(packet_log_file, "a") as log_file:
+        log_file.write("=" * 80 + "\n")
+        log_file.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
+        
+        if packet.haslayer(Ether):
+            log_file.write(f"MAC Source: {packet[Ether].src} → MAC Destination: {packet[Ether].dst}\n")
+        
+        if packet.haslayer(IP):
+            log_file.write(f"IP Source: {packet[IP].src} → IP Destination: {packet[IP].dst}\n")
+            log_file.write(f"Packet Length: {len(packet)} bytes\n")
+        
+        if packet.haslayer(TCP):
+            log_file.write("Protocol: TCP\n")
+            log_file.write(f"Source Port: {packet[TCP].sport} → Destination Port: {packet[TCP].dport}\n")
+            log_file.write(f"Flags: {packet[TCP].flags}\n")
+        elif packet.haslayer(UDP):
+            log_file.write("Protocol: UDP\n")
+            log_file.write(f"Source Port: {packet[UDP].sport} → Destination Port: {packet[UDP].dport}\n")
+        elif packet.haslayer(ICMP):
+            log_file.write("Protocol: ICMP\n")
+            log_file.write(f"ICMP Type: {packet[ICMP].type} Code: {packet[ICMP].code}\n")
+        elif packet.haslayer(ARP):
+            log_file.write("Protocol: ARP\n")
+            log_file.write(f"Operation: {packet[ARP].op}\n")
+        else:
+            log_file.write("Protocol: Other\n")
+        
+        # Log packet payload in hex format for better readability
+        if packet.haslayer(Raw):
+            log_file.write("Payload (Hex Dump):\n")
+            log_file.write(hexdump(packet[Raw].load, dump=True) + "\n")
+        
+        log_file.write("=" * 80 + "\n\n")
+
 def update_log(text_widget, message):
     text_widget.after(0, lambda: text_widget.insert(tk.END, message + "\n"))
     text_widget.after(0, text_widget.see, tk.END)
 
 def detect_attack(packet):
+    global ip_counter
     current_time = time.time()
     packet_info = f"{packet.summary()}"
+    log_packet(packet)
     update_log(packet_text, packet_info)
-    
+
     # Track packet types
     packet_window.append((current_time, packet))
     packet_window[:] = [(t, p) for t, p in packet_window if t > current_time - 60]
     packet_counter.clear()
     for _, p in packet_window:
+        if p.haslayer(IP):
+            ip_counter[p[IP].src] += 1
         if p.haslayer(TCP):
             packet_counter["TCP"] += 1
         elif p.haslayer(UDP):
@@ -205,6 +248,15 @@ def update_graphs():
         ax3.set_title("Packet Size Distribution")
         ax3.set_xlabel("Packet Size (bytes)")
         ax3.set_ylabel("Frequency")
+
+    if ip_counter:
+        sorted_ips = sorted(ip_counter.items(), key=lambda x: x[1], reverse=True)[:5]
+        ips, counts = zip(*sorted_ips) if sorted_ips else ([], [])
+        ax4.bar(ips, counts, color='red')
+        ax4.set_title("Top 5 IP Addresses")
+        ax4.set_xlabel("IP Address")
+        ax4.set_ylabel("Count")
+        ax4.set_xticklabels(ips, rotation=45, ha="right")
     
     canvas.draw()
     root.after(1000, update_graphs)  # Refresh graphs every second
@@ -212,33 +264,51 @@ def update_graphs():
 
 def create_ui():
     global alert_text, packet_text, ax1, ax2, ax3, ax4, canvas, root, attack_counts, packet_sizes
-    
+
     root = tk.Tk()
-    root.title("IDS Dashboard")
+    root.title("Intrusion Detection System (IDS) Dashboard")
+    root.geometry("1200x700")  # Set window size
+
+    # Top-Level Frame for Logs and Controls
+    top_frame = tk.Frame(root, padx=10, pady=10)
+    top_frame.pack(fill=tk.BOTH, expand=True)
+
+    # --- Incoming Packets Section ---
+    packet_frame = tk.LabelFrame(top_frame, text="Incoming Packets", font=("Arial", 12, "bold"), fg="blue")
+    packet_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    packet_text = scrolledtext.ScrolledText(packet_frame, width=80, height=10, bg="black", fg="lime", font=("Courier", 10))
+    packet_text.pack(fill=tk.BOTH, expand=True)
     
-    # Text Logs
-    tk.Label(root, text="Incoming Packets:").pack()
-    packet_text = scrolledtext.ScrolledText(root, width=100, height=10)
-    packet_text.pack()
-    
-    tk.Label(root, text="Attack Alerts:").pack()
-    alert_text = scrolledtext.ScrolledText(root, width=100, height=10)
-    alert_text.pack()
-    
-    start_button = tk.Button(root, text="Start IDS", command=start_sniffing_thread)
+    # --- Attack Alerts Section ---
+    alert_frame = tk.LabelFrame(top_frame, text="Attack Alerts", font=("Arial", 12, "bold"), fg="red")
+    alert_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    alert_text = scrolledtext.ScrolledText(alert_frame, width=80, height=10, bg="black", fg="red", font=("Courier", 10))
+    alert_text.pack(fill=tk.BOTH, expand=True)
+
+    # Start Button (Bottom)
+    button_frame = tk.Frame(root, pady=10)
+    button_frame.pack()
+
+    start_button = tk.Button(button_frame, text="Start IDS", font=("Arial", 12, "bold"), bg="green", fg="white", command=start_sniffing_thread)
     start_button.pack()
-    
-    # Graphs Layout
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
-    canvas = FigureCanvasTkAgg(fig, master=root)
-    canvas.get_tk_widget().pack()
-    
+
+    # --- Graphs Layout ---
+    graph_frame = tk.Frame(root, padx=10, pady=10)
+    graph_frame.pack(fill=tk.BOTH, expand=True)
+
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(20, 5))
+    fig.tight_layout(pad=4)  # Improve spacing
+
+    canvas = FigureCanvasTkAgg(fig, master=graph_frame)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
     # Data Tracking
     attack_counts = {}  # Dictionary to track attacks over time
     packet_sizes = []  # List to store packet sizes
-    
+
     root.after(1000, update_graphs)
     root.mainloop()
-
 print("Starting IDS UI...")
 create_ui()
