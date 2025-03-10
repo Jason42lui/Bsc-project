@@ -61,43 +61,75 @@ def log_packet(packet):
         
         if packet.haslayer(Ether):
             log_file.write(f"MAC Source: {packet[Ether].src} → MAC Destination: {packet[Ether].dst}\n")
+            log_file.write(f"Ethernet Type: {packet[Ether].type}\n")
         
         if packet.haslayer(IP):
             log_file.write(f"IP Source: {packet[IP].src} → IP Destination: {packet[IP].dst}\n")
-            log_file.write(f"Packet Length: {len(packet)} bytes\n")
+            log_file.write(f"IP Version: {packet[IP].version}\n")
+            log_file.write(f"IP Header Length: {packet[IP].ihl}\n")
+            log_file.write(f"IP Type of Service: {packet[IP].tos}\n")
+            log_file.write(f"IP Total Length: {packet[IP].len}\n")
+            log_file.write(f"IP ID: {packet[IP].id}\n")
+            log_file.write(f"IP Flags: {packet[IP].flags}\n")
+            log_file.write(f"IP Fragment Offset: {packet[IP].frag}\n")
+            log_file.write(f"IP TTL: {packet[IP].ttl}\n")
+            log_file.write(f"IP Protocol: {packet[IP].proto}\n")
+            log_file.write(f"IP Checksum: {packet[IP].chksum}\n")
+            log_file.write(f"IP Options: {packet[IP].options}\n")
         
         if packet.haslayer(TCP):
             log_file.write("Protocol: TCP\n")
             log_file.write(f"Source Port: {packet[TCP].sport} → Destination Port: {packet[TCP].dport}\n")
+            log_file.write(f"Sequence Number: {packet[TCP].seq}\n")
+            log_file.write(f"Acknowledgment Number: {packet[TCP].ack}\n")
+            log_file.write(f"Data Offset: {packet[TCP].dataofs}\n")
+            log_file.write(f"Reserved: {packet[TCP].reserved}\n")
             log_file.write(f"Flags: {packet[TCP].flags}\n")
+            log_file.write(f"Window Size: {packet[TCP].window}\n")
+            log_file.write(f"Checksum: {packet[TCP].chksum}\n")
+            log_file.write(f"Urgent Pointer: {packet[TCP].urgptr}\n")
+            log_file.write(f"Options: {packet[TCP].options}\n")
         elif packet.haslayer(UDP):
             log_file.write("Protocol: UDP\n")
             log_file.write(f"Source Port: {packet[UDP].sport} → Destination Port: {packet[UDP].dport}\n")
+            log_file.write(f"Length: {packet[UDP].len}\n")
+            log_file.write(f"Checksum: {packet[UDP].chksum}\n")
         elif packet.haslayer(ICMP):
             log_file.write("Protocol: ICMP\n")
             log_file.write(f"ICMP Type: {packet[ICMP].type} Code: {packet[ICMP].code}\n")
+            log_file.write(f"Checksum: {packet[ICMP].chksum}\n")
+            if packet[ICMP].type == 0 or packet[ICMP].type == 8:  # Echo reply or request
+                log_file.write(f"ID: {packet[ICMP].id}\n")
+                log_file.write(f"Sequence: {packet[ICMP].seq}\n")
         elif packet.haslayer(ARP):
             log_file.write("Protocol: ARP\n")
+            log_file.write(f"Hardware Type: {packet[ARP].hwtype}\n")
+            log_file.write(f"Protocol Type: {packet[ARP].ptype}\n")
+            log_file.write(f"Hardware Size: {packet[ARP].hwlen}\n")
+            log_file.write(f"Protocol Size: {packet[ARP].plen}\n")
             log_file.write(f"Operation: {packet[ARP].op}\n")
+            log_file.write(f"Sender MAC: {packet[ARP].hwsrc}\n")
+            log_file.write(f"Sender IP: {packet[ARP].psrc}\n")
+            log_file.write(f"Target MAC: {packet[ARP].hwdst}\n")
+            log_file.write(f"Target IP: {packet[ARP].pdst}\n")
         else:
             log_file.write("Protocol: Other\n")
         
         # Log packet payload in hex format for better readability
         if packet.haslayer(Raw):
             log_file.write("Payload (Hex Dump):\n")
-            log_file.write(hexdump(packet[Raw].load, dump=True) + "\n")
-        
-        log_file.write("=" * 80 + "\n\n")
 
 def update_log(text_widget, message):
     text_widget.after(0, lambda: text_widget.insert(tk.END, message + "\n"))
     text_widget.after(0, text_widget.see, tk.END)
 
 def detect_attack(packet):
+    global ip_counter, packet_tree
     global ip_counter
     current_time = time.time()
     packet_info = f"{packet.summary()}"
     log_packet(packet)
+    add_packet_to_tree(packet)
     update_log(packet_text, packet_info)
 
     # Track packet types
@@ -272,7 +304,7 @@ def update_graphs():
 
 
 def create_ui():
-    global alert_text, packet_text, ax1, ax2, ax3, ax4, canvas, root, attack_counts, packet_sizes
+    global alert_text, packet_text, ax1, ax2, ax3, ax4, canvas, root, attack_counts, packet_sizes, packet_tree, packet_details_text
 
     root = tk.Tk()
     root.title("Intrusion Detection System (IDS) Dashboard")
@@ -332,7 +364,77 @@ def create_ui():
 
     # Add tabs to the notebook
     notebook.add(tab1, text="Dashboard")
-    notebook.add(tab2, text="Empty Tab")
+    notebook.add(tab2, text="Packet List")
+
+    # --- Packet List Layout ---
+    packet_list_frame = tk.Frame(tab2, padx=10, pady=10)
+    packet_list_frame.pack(fill=tk.BOTH, expand=True)
+
+    # Left Panel - Treeview for Packet List
+    packet_tree_frame = tk.Frame(packet_list_frame)
+    packet_tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    packet_tree = ttk.Treeview(packet_tree_frame, columns=("Timestamp", "Source IP", "Destination IP", "Protocol", "Size", "Status"), show="headings")
+    packet_tree.heading("Timestamp", text="Timestamp")
+    packet_tree.heading("Source IP", text="Source IP")
+    packet_tree.heading("Destination IP", text="Destination IP")
+    packet_tree.heading("Protocol", text="Protocol")
+    packet_tree.heading("Size", text="Size")
+    packet_tree.heading("Status", text="Status")
+    packet_tree.pack(fill=tk.BOTH, expand=True)
+
+    packet_tree_scroll = ttk.Scrollbar(packet_tree_frame, orient="vertical", command=packet_tree.yview)
+    packet_tree.configure(yscroll=packet_tree_scroll.set)
+    packet_tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # Right Panel - Text Widget for Packet Details
+    packet_details_frame = tk.Frame(packet_list_frame)
+    packet_details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    packet_details_text = scrolledtext.ScrolledText(packet_details_frame, width=80, height=40, bg="black", fg="white", font=("Courier", 10))
+    packet_details_text.pack(fill=tk.BOTH, expand=True)
+
+    # Bind Treeview selection event
+    packet_tree.bind("<<TreeviewSelect>>", on_packet_select)
+
     root.mainloop()
+
+def on_packet_select(event):
+    selected_item = packet_tree.selection()[0]
+    packet_details = packet_tree.item(selected_item, "values")
+    packet_details_text.delete(1.0, tk.END)
+    details = f"Timestamp: {packet_details[0]}\nSource IP: {packet_details[1]}\nDestination IP: {packet_details[2]}\nProtocol: {packet_details[3]}\nSize: {packet_details[4]}\nStatus: {packet_details[5]}"
+    packet_details_text.insert(tk.END, details)
+    
+    # Retrieve the full packet details from the log file
+    with open(packet_log_file, "r") as log_file:
+        lines = log_file.readlines()
+        start_index = None
+        for i, line in enumerate(lines):
+            if f"Timestamp: {packet_details[0]}" in line:
+                start_index = i
+                break
+        if start_index is not None:
+            end_index = start_index + 1
+            while end_index < len(lines) and lines[end_index].strip() != "=" * 80:
+                end_index += 1
+            full_details = "".join(lines[start_index:end_index])
+            packet_details_text.insert(tk.END, "\n\nFull Packet Details:\n" + full_details)
+
+def add_packet_to_tree(packet):
+    """Adds packet details to the packet_tree in tab 2."""
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    src_ip = packet[IP].src if packet.haslayer(IP) else "N/A"
+    dst_ip = packet[IP].dst if packet.haslayer(IP) else "N/A"
+    protocol = packet[IP].proto if packet.haslayer(IP) else "N/A"
+    size = len(packet)
+    status = "Normal"  # Default status, can be updated based on detection logic
+
+    # Limit the number of packets shown in the treeview
+    if len(packet_tree.get_children()) >= 100:
+        packet_tree.delete(packet_tree.get_children()[0])
+
+    packet_tree.insert("", "end", values=(timestamp, src_ip, dst_ip, protocol, size, status))
+
 print("Starting IDS UI...")
 create_ui()
