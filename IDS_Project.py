@@ -2,7 +2,7 @@ import logging
 import time
 import tkinter as tk
 import threading
-from tkinter import scrolledtext
+from tkinter import scrolledtext, ttk
 from collections import defaultdict
 from scapy.all import sniff, Ether, IP, TCP, UDP, ICMP, ARP, Raw, hexdump
 from prettytable import PrettyTable
@@ -227,39 +227,48 @@ def update_graphs():
     else:
         labels = list(packet_counter.keys())
         sizes = list(packet_counter.values())
-        colors = ['blue', 'green', 'red', 'purple', 'orange']
+        colors = plt.cm.Paired(np.linspace(0, 1, len(labels)))
         explode = [0.05] * len(labels)
         ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140,
                 colors=colors, explode=explode, shadow=True, textprops={'fontsize': 12})
         ax1.set_title("Packet Distribution", fontsize=14)
 
     # --- Update Bar Chart (Packet Type Count) ---
-    if packet_counter:
+    if not packet_counter:
+        ax2.text(0.5, 0.5, "No Data", fontsize=14, ha='center', va='center')
+    else:
         labels = list(packet_counter.keys())
         values = list(packet_counter.values())
-        ax2.bar(labels, values, color=['blue', 'green', 'red', 'purple', 'orange'])
-        ax2.set_title("Packet Type Distribution")
-        ax2.set_xlabel("Packet Type")
-        ax2.set_ylabel("Count")
-    
-    # --- Update Histogram (Packet Size Distribution) ---
-    if packet_sizes:
-        ax3.hist(packet_sizes, bins=20, color='blue', edgecolor='black')
-        ax3.set_title("Packet Size Distribution")
-        ax3.set_xlabel("Packet Size (bytes)")
-        ax3.set_ylabel("Frequency")
+        colors = plt.cm.Paired(np.linspace(0, 1, len(labels)))
+        ax2.bar(labels, values, color=colors)
+        ax2.set_title("Packet Type Distribution", fontsize=14)
+        ax2.set_xlabel("Packet Type", fontsize=12)
+        ax2.set_ylabel("Count", fontsize=12)
+        ax2.tick_params(axis='x', rotation=45)
 
-    if ip_counter:
+    # --- Update Histogram (Packet Size Distribution) ---
+    if not packet_sizes:
+        ax3.text(0.5, 0.5, "No Data", fontsize=14, ha='center', va='center')
+    else:
+        ax3.hist(packet_sizes, bins=20, color='blue', edgecolor='black')
+        ax3.set_title("Packet Size Distribution", fontsize=14)
+        ax3.set_xlabel("Packet Size (bytes)", fontsize=12)
+        ax3.set_ylabel("Frequency", fontsize=12)
+
+    # --- Update Bar Chart (Top 5 IP Addresses) ---
+    if not ip_counter:
+        ax4.text(0.5, 0.5, "No Data", fontsize=14, ha='center', va='center')
+    else:
         sorted_ips = sorted(ip_counter.items(), key=lambda x: x[1], reverse=True)[:5]
         ips, counts = zip(*sorted_ips) if sorted_ips else ([], [])
-        ax4.bar(ips, counts, color='red')
-        ax4.set_title("Top 5 IP Addresses")
-        ax4.set_xlabel("IP Address")
-        ax4.set_ylabel("Count")
+        colors = plt.cm.Paired(np.linspace(0, 1, len(ips)))
+        ax4.bar(ips, counts, color=colors)
+        ax4.set_title("Top 5 IP Addresses", fontsize=14)
+        ax4.set_xlabel("IP Address", fontsize=12)
+        ax4.set_ylabel("Count", fontsize=12)
         ax4.set_xticklabels(ips, rotation=45, ha="right")
-    
     canvas.draw()
-    root.after(1000, update_graphs)  # Refresh graphs every second
+    root.after(1000, update_graphs)
 
 
 def create_ui():
@@ -267,39 +276,50 @@ def create_ui():
 
     root = tk.Tk()
     root.title("Intrusion Detection System (IDS) Dashboard")
-    root.geometry("1200x700")  # Set window size
+    root.geometry("1200x1000") 
+    
+    # Create a Notebook (tabbed interface)
+    notebook = ttk.Notebook(root)
+    notebook.pack(expand=True, fill="both")
 
+    # Create Frames for tabs
+    tab1 = ttk.Frame(notebook)
+    tab2 = ttk.Frame(notebook)
+    
     # Top-Level Frame for Logs and Controls
     top_frame = tk.Frame(root, padx=10, pady=10)
     top_frame.pack(fill=tk.BOTH, expand=True)
 
-    # --- Incoming Packets Section ---
-    packet_frame = tk.LabelFrame(top_frame, text="Incoming Packets", font=("Arial", 12, "bold"), fg="blue")
+    # --- Incoming Packets and Attack Alerts Section ---
+    log_frame = tk.Frame(tab1, padx=10, pady=10)
+    log_frame.pack(fill=tk.BOTH, expand=True)
+
+    packet_frame = tk.LabelFrame(log_frame, text="Incoming Packets", font=("Arial", 12, "bold"), fg="blue")
     packet_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     packet_text = scrolledtext.ScrolledText(packet_frame, width=80, height=10, bg="black", fg="lime", font=("Courier", 10))
     packet_text.pack(fill=tk.BOTH, expand=True)
     
-    # --- Attack Alerts Section ---
-    alert_frame = tk.LabelFrame(top_frame, text="Attack Alerts", font=("Arial", 12, "bold"), fg="red")
+    alert_frame = tk.LabelFrame(log_frame, text="Attack Alerts", font=("Arial", 12, "bold"), fg="red")
     alert_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     alert_text = scrolledtext.ScrolledText(alert_frame, width=80, height=10, bg="black", fg="red", font=("Courier", 10))
     alert_text.pack(fill=tk.BOTH, expand=True)
 
     # Start Button (Bottom)
-    button_frame = tk.Frame(root, pady=10)
+    button_frame = tk.Frame(tab1, pady=10)
     button_frame.pack()
 
     start_button = tk.Button(button_frame, text="Start IDS", font=("Arial", 12, "bold"), bg="green", fg="white", command=start_sniffing_thread)
     start_button.pack()
 
     # --- Graphs Layout ---
-    graph_frame = tk.Frame(root, padx=10, pady=10)
+    graph_frame = tk.Frame(tab1, padx=10, pady=10, bg="#d3d3d3")
     graph_frame.pack(fill=tk.BOTH, expand=True)
 
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(20, 5))
-    fig.tight_layout(pad=4)  # Improve spacing
+    fig.patch.set_facecolor('#d3d3d3') 
+    fig.tight_layout(pad=4) 
 
     canvas = FigureCanvasTkAgg(fig, master=graph_frame)
     canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -309,6 +329,10 @@ def create_ui():
     packet_sizes = []  # List to store packet sizes
 
     root.after(1000, update_graphs)
+
+    # Add tabs to the notebook
+    notebook.add(tab1, text="Dashboard")
+    notebook.add(tab2, text="Empty Tab")
     root.mainloop()
 print("Starting IDS UI...")
 create_ui()
