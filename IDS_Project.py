@@ -9,16 +9,9 @@ from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
+import os
 
 packet_log_file = "detailed_packet_log.txt"
-
-# Configure logging for packets
-logging.basicConfig(
-    filename="packets.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
 
 # Configure logging for detected attacks
 attack_logger = logging.getLogger("attack_logger")
@@ -129,7 +122,6 @@ def detect_attack(packet):
     current_time = time.time()
     packet_info = f"{packet.summary()}"
     log_packet(packet)
-    add_packet_to_tree(packet)
     update_log(packet_text, packet_info)
 
     # Track packet types
@@ -242,7 +234,7 @@ def detect_attack(packet):
                 update_log(alert_text, f"\n[ALERT] {attack_msg}\n")
 
 def start_sniffing():
-    sniff(iface="lo", prn=detect_attack, store=0)
+    sniff(iface="lo", prn=detect_attack, store=0, filter="")
 
 def start_sniffing_thread():
     sniff_thread = threading.Thread(target=start_sniffing, daemon=True)
@@ -306,6 +298,43 @@ def update_graphs():
     canvas.draw()
     root.after(1000, update_graphs)
     
+def load_packets_from_log():
+    """Loads packet summaries from the detailed packet log file and populates the packet_tree."""
+    # Ensure the log file exists
+    if not os.path.exists(packet_log_file):
+        open(packet_log_file, 'w').close()
+    
+    with open(packet_log_file, "r") as log_file:
+        lines = log_file.readlines()
+        packet_summary = {}
+        for i, line in enumerate(lines):
+            if line.startswith("Timestamp:"):
+                timestamp = line.split("Timestamp: ")[1].strip()
+                packet_summary["Timestamp"] = timestamp
+            elif line.startswith("IP Source:"):
+                src_ip = line.split("IP Source: ")[1].split(" → ")[0].strip()
+                packet_summary["Source IP"] = src_ip
+            elif line.startswith("IP Destination:"):
+                dst_ip = line.split("IP Destination: ")[1].strip()
+                packet_summary["Destination IP"] = dst_ip
+            elif line.startswith("Protocol:"):
+                protocol = line.split("Protocol: ")[1].strip()
+                packet_summary["Protocol"] = protocol
+            elif line.startswith("IP Total Length:"):
+                size = line.split("IP Total Length: ")[1].strip()
+                packet_summary["Size"] = size
+            elif line.startswith("=" * 80):
+                if packet_summary:
+                    packet_tree.insert("", "end", values=(
+                        packet_summary.get("Timestamp", "N/A"),
+                        packet_summary.get("Source IP", "N/A"),
+                        packet_summary.get("Destination IP", "N/A"),
+                        packet_summary.get("Protocol", "N/A"),
+                        packet_summary.get("Size", "N/A"),
+                        "Normal"  # Default status, can be updated based on detection logic
+                    ))
+                packet_summary = {}
+
 def on_packet_select(event):
     selected_item = packet_tree.selection()[0]
     packet_details = packet_tree.item(selected_item, "values")
@@ -328,39 +357,18 @@ def on_packet_select(event):
             full_details = "".join(lines[start_index:end_index])
             packet_details_text.insert(tk.END, "\n\nFull Packet Details:\n" + full_details)
 
-def add_packet_to_tree(packet):
-    """Adds packet details to the packet_tree in tab 2."""
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-    src_ip = packet[IP].src if packet.haslayer(IP) else "N/A"
-    dst_ip = packet[IP].dst if packet.haslayer(IP) else "N/A"
-    protocol = "N/A"
-    if packet.haslayer(IP):
-        proto_num = packet[IP].proto
-        protocol = {
-            6: "TCP",
-            17: "UDP",
-            1: "ICMP",
-            2: "IGMP",
-            89: "OSPF",
-            47: "GRE",
-            50: "ESP",
-            51: "AH",
-            58: "ICMPv6",
-            88: "EIGRP",
-            115: "L2TP"
-        }.get(proto_num, f"Unknown ({proto_num})")
-    size = len(packet)
-    status = "Normal"  # Default status, can be updated based on detection logic
-
-    packet_tree.insert("", "end", values=(timestamp, src_ip, dst_ip, protocol, size, status))
-
+def update_packet_list():
+    """Periodically updates the packet list from the log file."""
+    packet_tree.delete(*packet_tree.get_children())  # Clear the current packet list
+    load_packets_from_log()  # Reload packets from the log file
+    root.after(5000, update_packet_list)  # Schedule the next update in 5 seconds
 
 def create_ui():
     global alert_text, packet_text, ax1, ax2, ax3, ax4, canvas, root, attack_counts, packet_sizes, packet_tree, packet_details_text
 
     root = tk.Tk()
     root.title("Intrusion Detection System (IDS) Dashboard")
-    root.geometry("1200x1000") 
+    root.geometry("1500x1000") 
     
     # Create a Notebook (tabbed interface)
     notebook = ttk.Notebook(root)
@@ -448,6 +456,9 @@ def create_ui():
 
     # Bind Treeview selection event
     packet_tree.bind("<<TreeviewSelect>>", on_packet_select)
+
+    load_packets_from_log()
+    root.after(1000, update_packet_list)  # Schedule the first update in 5 seconds
 
     root.mainloop()
 
