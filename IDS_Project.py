@@ -205,6 +205,7 @@ def detect_attack(packet):
                 attack_logger.warning(attack_msg)
                 update_log(alert_text, f"\n[ALERT] {attack_msg}\n")
     
+    # Detect Unauthorized Access (Broken Access Control)
     if packet.haslayer(TCP) and packet.haslayer(Raw):
         payload = packet[Raw].load.decode(errors="ignore")
         if "admin" in payload.lower() and "login" not in payload.lower():
@@ -213,6 +214,7 @@ def detect_attack(packet):
                 attack_logger.warning(attack_msg)
                 update_log(alert_text, f"\n[ALERT] {attack_msg}\n")
 
+    # Detect Unencrypted Credentials (Cryptographic Failures)
     if packet.haslayer(Raw):
         raw_data = packet[Raw].load.decode(errors="ignore")
         if "Authorization: Basic" in raw_data:
@@ -221,6 +223,7 @@ def detect_attack(packet):
                 attack_logger.warning(attack_msg)
                 update_log(alert_text, f"\n[ALERT] {attack_msg}\n")
 
+    # Detect SQL Injection (Injection Attacks)
     sqli_patterns = ["' OR 1=1 --", "UNION SELECT", "DROP TABLE"]
     if packet.haslayer(Raw):
         raw_data = packet[Raw].load.decode(errors="ignore")
@@ -228,7 +231,8 @@ def detect_attack(packet):
             attack_msg = f"SQL Injection attempt detected from {packet[IP].src}"
             attack_logger.warning(attack_msg)
             update_log(alert_text, f"\n[ALERT] {attack_msg}\n")
-            
+    
+    # Detect Missing Authentication Headers (Insecure Design)
     if packet.haslayer(Raw):
         raw_data = packet[Raw].load.decode(errors="ignore")
         if "Authorization:" not in raw_data and "Cookie:" not in raw_data and "session" not in raw_data:
@@ -301,6 +305,54 @@ def update_graphs():
         ax4.set_xticklabels(ips, rotation=45, ha="right")
     canvas.draw()
     root.after(1000, update_graphs)
+    
+def on_packet_select(event):
+    selected_item = packet_tree.selection()[0]
+    packet_details = packet_tree.item(selected_item, "values")
+    packet_details_text.delete(1.0, tk.END)
+    details = f"Timestamp: {packet_details[0]}\nSource IP: {packet_details[1]}\nDestination IP: {packet_details[2]}\nProtocol: {packet_details[3]}\nSize: {packet_details[4]}\nStatus: {packet_details[5]}"
+    packet_details_text.insert(tk.END, details)
+    
+    # Retrieve the full packet details from the log file
+    with open(packet_log_file, "r") as log_file:
+        lines = log_file.readlines()
+        start_index = None
+        for i, line in enumerate(lines):
+            if f"Timestamp: {packet_details[0]}" in line:
+                start_index = i
+                break
+        if start_index is not None:
+            end_index = start_index + 1
+            while end_index < len(lines) and lines[end_index].strip() != "=" * 80:
+                end_index += 1
+            full_details = "".join(lines[start_index:end_index])
+            packet_details_text.insert(tk.END, "\n\nFull Packet Details:\n" + full_details)
+
+def add_packet_to_tree(packet):
+    """Adds packet details to the packet_tree in tab 2."""
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    src_ip = packet[IP].src if packet.haslayer(IP) else "N/A"
+    dst_ip = packet[IP].dst if packet.haslayer(IP) else "N/A"
+    protocol = "N/A"
+    if packet.haslayer(IP):
+        proto_num = packet[IP].proto
+        protocol = {
+            6: "TCP",
+            17: "UDP",
+            1: "ICMP",
+            2: "IGMP",
+            89: "OSPF",
+            47: "GRE",
+            50: "ESP",
+            51: "AH",
+            58: "ICMPv6",
+            88: "EIGRP",
+            115: "L2TP"
+        }.get(proto_num, f"Unknown ({proto_num})")
+    size = len(packet)
+    status = "Normal"  # Default status, can be updated based on detection logic
+
+    packet_tree.insert("", "end", values=(timestamp, src_ip, dst_ip, protocol, size, status))
 
 
 def create_ui():
@@ -398,43 +450,6 @@ def create_ui():
     packet_tree.bind("<<TreeviewSelect>>", on_packet_select)
 
     root.mainloop()
-
-def on_packet_select(event):
-    selected_item = packet_tree.selection()[0]
-    packet_details = packet_tree.item(selected_item, "values")
-    packet_details_text.delete(1.0, tk.END)
-    details = f"Timestamp: {packet_details[0]}\nSource IP: {packet_details[1]}\nDestination IP: {packet_details[2]}\nProtocol: {packet_details[3]}\nSize: {packet_details[4]}\nStatus: {packet_details[5]}"
-    packet_details_text.insert(tk.END, details)
-    
-    # Retrieve the full packet details from the log file
-    with open(packet_log_file, "r") as log_file:
-        lines = log_file.readlines()
-        start_index = None
-        for i, line in enumerate(lines):
-            if f"Timestamp: {packet_details[0]}" in line:
-                start_index = i
-                break
-        if start_index is not None:
-            end_index = start_index + 1
-            while end_index < len(lines) and lines[end_index].strip() != "=" * 80:
-                end_index += 1
-            full_details = "".join(lines[start_index:end_index])
-            packet_details_text.insert(tk.END, "\n\nFull Packet Details:\n" + full_details)
-
-def add_packet_to_tree(packet):
-    """Adds packet details to the packet_tree in tab 2."""
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-    src_ip = packet[IP].src if packet.haslayer(IP) else "N/A"
-    dst_ip = packet[IP].dst if packet.haslayer(IP) else "N/A"
-    protocol = packet[IP].proto if packet.haslayer(IP) else "N/A"
-    size = len(packet)
-    status = "Normal"  # Default status, can be updated based on detection logic
-
-    # Limit the number of packets shown in the treeview
-    if len(packet_tree.get_children()) >= 100:
-        packet_tree.delete(packet_tree.get_children()[0])
-
-    packet_tree.insert("", "end", values=(timestamp, src_ip, dst_ip, protocol, size, status))
 
 print("Starting IDS UI...")
 create_ui()
